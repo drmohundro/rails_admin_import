@@ -1,48 +1,48 @@
 require 'open-uri'
 require "rails_admin_import/import_logger"
-  
+
 module RailsAdminImport
   module Import
     extend ActiveSupport::Concern
-  
+
     module ClassMethods
       def file_fields
         attrs = []
         if self.methods.include?(:attachment_definitions) && !self.attachment_definitions.nil?
           attrs = self.attachment_definitions.keys
         end
-        attrs - RailsAdminImport.config(self).excluded_fields 
+        attrs - RailsAdminImport.config(self).excluded_fields
       end
-  
+
       def import_fields
-        fields = []  
+        fields = []
 
         fields = self.new.attributes.keys.collect { |key| key.to_sym }
-  
+
         self.belongs_to_fields.each do |key|
           fields.delete("#{key}_id".to_sym)
         end
-  
+
         self.file_fields.each do |key|
           fields.delete("#{key}_file_name".to_sym)
           fields.delete("#{key}_content_type".to_sym)
           fields.delete("#{key}_file_size".to_sym)
           fields.delete("#{key}_updated_at".to_sym)
         end
- 
-        excluded_fields = RailsAdminImport.config(self).excluded_fields 
+
+        excluded_fields = RailsAdminImport.config(self).excluded_fields
         [:id, :created_at, :updated_at, excluded_fields].flatten.each do |key|
           fields.delete(key)
         end
-  
+
         fields
       end
- 
+
       def belongs_to_fields
         attrs = self.reflections.select { |k, v| v.macro == :belongs_to && ! v.options.has_key?(:polymorphic) }.keys
-        attrs - RailsAdminImport.config(self).excluded_fields 
+        attrs - RailsAdminImport.config(self).excluded_fields
       end
-  
+
       def many_fields
         attrs = []
         self.reflections.each do |k, v|
@@ -51,9 +51,9 @@ module RailsAdminImport
           end
         end
 
-        attrs - RailsAdminImport.config(self).excluded_fields 
-      end 
-  
+        attrs - RailsAdminImport.config(self).excluded_fields
+      end
+
       def run_import(params)
         begin
           if !params.has_key?(:file)
@@ -68,31 +68,31 @@ module RailsAdminImport
           clean      = text #.force_encoding('BINARY').encode('UTF-8', :undef => :replace, :replace => '').gsub(/\n$/, '')
           file_check = CSV.new(clean)
           logger     = ImportLogger.new
-     
+
           if file_check.readlines.size > RailsAdminImport.config.line_item_limit
             return results = { :success => [], :error => ["Please limit upload file to #{RailsAdminImport.config.line_item_limit} line items."] }
           end
-  
+
           map = {}
-   
+
           file = CSV.new(clean)
           file.readline.each_with_index do |key, i|
             if self.many_fields.include?(key.to_sym)
               map[key.to_sym] ||= []
               map[key.to_sym] << i
             else
-              map[key.to_sym] = i 
+              map[key.to_sym] = i
             end
           end
-   
+
           update = params.has_key?(:update_if_exists) && params[:update_if_exists] ? params[:update_lookup].to_sym : nil
-  
+
           if update && !map.has_key?(params[:update_lookup].to_sym)
             return results = { :success => [], :error => ["Your file must contain a column for the 'Update lookup field' you selected."] }
-          end 
-    
+          end
+
           results = { :success => [], :error => [] }
-    
+
           associated_map = {}
           self.belongs_to_fields.flatten.each do |field|
             associated_map[field] = field.to_s.classify.constantize.all.inject({}) { |hash, c| hash[c.send(params[field]).to_s] = c.id; hash }
@@ -100,15 +100,15 @@ module RailsAdminImport
           self.many_fields.flatten.each do |field|
             associated_map[field] = field.to_s.classify.constantize.all.inject({}) { |hash, c| hash[c.send(params[field]).to_s] = c; hash }
           end
-   
+
           label_method = RailsAdminImport.config(self).label
-  
+
           file.each do |row|
             object = self.import_initialize(row, map, update)
             object.import_belongs_to_data(associated_map, row, map)
             object.import_many_data(associated_map, row, map)
             object.before_import_save(row, map)
-  
+
             object.import_files(row, map)
 
             verb = object.new_record? ? "Create" : "Update"
@@ -126,14 +126,14 @@ module RailsAdminImport
               results[:error] << "Errors before save: #{object.send(label_method)}. Errors: #{object.errors.full_messages.join(', ')}."
             end
           end
-    
+
           results
         rescue Exception => e
           logger.info "#{Time.now.to_s}: Unknown exception in import: #{e.inspect}"
           return results = { :success => [], :error => ["Could not upload. Unexpected error: #{e.to_s}"] }
         end
       end
-  
+
       def import_initialize(row, map, update)
         new_attrs = {}
         self.import_fields.each do |key|
@@ -143,7 +143,7 @@ module RailsAdminImport
         item = nil
         if update.present?
           item = self.send("find_by_#{update}", row[map[update]])
-        end 
+        end
 
         if item.nil?
           item = self.new(new_attrs)
@@ -155,12 +155,12 @@ module RailsAdminImport
         item
       end
     end
-   
+
     def before_import_save(*args)
       # Meant to be overridden to do special actions
     end
 
-	def after_import_save(*args)
+    def after_import_save(*args)
       # Meant to be overridden to do special actions
     end
 
@@ -188,8 +188,8 @@ module RailsAdminImport
 
     def import_belongs_to_data(associated_map, row, map)
       self.class.belongs_to_fields.each do |key|
-        if map.has_key?(key) && row[map[key]] != ""
-          self.send("#{key}_id=", associated_map[key][row[map[key]]])
+        if map.has_key?(key.to_sym) && row[map[key.to_sym]] != ""
+          self.send("#{key}_id=", associated_map[key][row[map[key.to_sym]]])
         end
       end
     end
